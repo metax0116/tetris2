@@ -42,12 +42,73 @@ const gameState = {
 
 class Player {
     constructor() {
-        // プレイヤーのメッシュ作成（正面マーカー付き）
-        const geometry = new THREE.BoxGeometry(2, 3, 2);
-        const materials = this.createMaterials();
-        this.mesh = new THREE.Mesh(geometry, materials);
-        this.mesh.castShadow = true;
-        this.mesh.receiveShadow = true;
+        // プレイヤー全体のグループ
+        this.mesh = new THREE.Group();
+        
+        // マテリアル定義
+        const redMat = new THREE.MeshPhongMaterial({ color: 0xff0000 }); // 帽子・シャツ
+        const blueMat = new THREE.MeshPhongMaterial({ color: 0x0000ff }); // オーバーオール
+        const skinMat = new THREE.MeshPhongMaterial({ color: 0xffdbac }); // 肌
+        const blackMat = new THREE.MeshPhongMaterial({ color: 0x222222 }); // 靴・髪
+        
+        // 1. 胴体 (Torso)
+        const torso = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.5, 0.8), blueMat);
+        torso.position.y = 1.75;
+        torso.castShadow = true;
+        this.mesh.add(torso);
+        
+        // 2. 頭 (Head)
+        const head = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), skinMat);
+        head.position.y = 3.0;
+        head.castShadow = true;
+        this.mesh.add(head);
+        
+        // 帽子 (Hat)
+        const hat = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.3, 1.3), redMat);
+        hat.position.y = 3.5;
+        hat.position.z = 0.1;
+        this.mesh.add(hat);
+        
+        // 鼻 (Nose)
+        const nose = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.3, 0.3), skinMat);
+        nose.position.y = 2.9;
+        nose.position.z = 0.6;
+        this.mesh.add(nose);
+        
+        // 3. 腕 (Arms)
+        const armGeo = new THREE.BoxGeometry(0.4, 1.2, 0.4);
+        
+        this.leftArm = new THREE.Mesh(armGeo, redMat);
+        this.leftArm.position.set(0.8, 2.0, 0);
+        this.mesh.add(this.leftArm);
+        
+        this.rightArm = new THREE.Mesh(armGeo, redMat);
+        this.rightArm.position.set(-0.8, 2.0, 0);
+        this.mesh.add(this.rightArm);
+        
+        // 4. 足 (Legs)
+        const legGeo = new THREE.BoxGeometry(0.5, 1.0, 0.5);
+        
+        this.leftLeg = new THREE.Mesh(legGeo, blueMat);
+        this.leftLeg.position.set(0.35, 0.5, 0);
+        this.mesh.add(this.leftLeg);
+        
+        this.rightLeg = new THREE.Mesh(legGeo, blueMat);
+        this.rightLeg.position.set(-0.35, 0.5, 0);
+        this.mesh.add(this.rightLeg);
+        
+        // 靴 (Shoes)
+        const shoeGeo = new THREE.BoxGeometry(0.6, 0.3, 0.8);
+        const leftShoe = new THREE.Mesh(shoeGeo, blackMat);
+        leftShoe.position.y = -0.5;
+        leftShoe.position.z = 0.1;
+        this.leftLeg.add(leftShoe);
+        
+        const rightShoe = new THREE.Mesh(shoeGeo, blackMat);
+        rightShoe.position.y = -0.5;
+        rightShoe.position.z = 0.1;
+        this.rightLeg.add(rightShoe);
+
         this.mesh.position.y = 10;
         scene.add(this.mesh);
         
@@ -84,67 +145,70 @@ class Player {
         this.lastJumpWasGround = false;
         this.canWallKick = false;
         this.wallNormal = new THREE.Vector3(0, 0, 0);
-    }
-    
-    createMaterials() {
-        const faces = [
-            { color: '#ff6b6b', label: '右' },
-            { color: '#ff6b6b', label: '左' },
-            { color: '#4ecdc4', label: '上' },
-            { color: '#ff6b6b', label: '下' },
-            { color: '#0066cc', label: '▲' },
-            { color: '#ff0000', label: '◀' }
-        ];
         
-        return faces.map(face => {
-            const canvas = document.createElement('canvas');
-            canvas.width = 64;
-            canvas.height = 64;
-            const ctx = canvas.getContext('2d');
-            
-            ctx.fillStyle = face.color;
-            ctx.fillRect(0, 0, 64, 64);
-            ctx.fillStyle = '#ffffff';
-            ctx.font = 'bold 40px Arial';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(face.label, 32, 32);
-            
-            return new THREE.MeshPhongMaterial({ 
-                map: new THREE.CanvasTexture(canvas)
-            });
-        });
+        // アニメーション用タイマー
+        this.animTimer = 0;
     }
     
     update() {
         this.handleInput();
-        // 入力処理の後に一旦接地状態をリセットし、その後の衝突判定で再評価する
         this.isGrounded = false;
         this.updateMovement();
         this.updateGravity();
         this.updatePosition();
         this.updateGroundedState();
+        this.updateAnimation();
+    }
+    
+    updateAnimation() {
+        if (this.currentSpeed > 0.05 && this.isGrounded) {
+            // 走り・歩きアニメーション（手足を振る）
+            this.animTimer += this.currentSpeed * 0.5;
+            const angle = Math.sin(this.animTimer * 10) * 0.5;
+            
+            this.leftArm.rotation.x = angle;
+            this.rightArm.rotation.x = -angle;
+            this.leftLeg.rotation.x = -angle;
+            this.rightLeg.rotation.x = angle;
+        } else if (!this.isGrounded) {
+            // ジャンプ中のポーズ
+            this.leftArm.rotation.x = -Math.PI / 4;
+            this.rightArm.rotation.x = -Math.PI / 4;
+            this.leftLeg.rotation.x = 0.2;
+            this.rightLeg.rotation.x = -0.2;
+        } else {
+            // 直立不動ポーズ
+            this.leftArm.rotation.x = 0;
+            this.rightArm.rotation.x = 0;
+            this.leftLeg.rotation.x = 0;
+            this.rightLeg.rotation.x = 0;
+        }
     }
     
     handleInput() {
-        // 入力ベクトル（WASD）
+        // 入力ベクトル（WASD/矢印キー）
         let inputX = 0;
         let inputZ = 0;
         
-        if (gameState.keys['w'] || gameState.keys['W'] || gameState.keys['ArrowUp']) inputZ -= 1;
-        if (gameState.keys['s'] || gameState.keys['S'] || gameState.keys['ArrowDown']) inputZ += 1;
-        if (gameState.keys['a'] || gameState.keys['A'] || gameState.keys['ArrowLeft']) inputX -= 1;
-        if (gameState.keys['d'] || gameState.keys['D'] || gameState.keys['ArrowRight']) inputX += 1;
+        // e.code を優先的に使用して、Shiftキー等の影響を排除する
+        if (gameState.keys['KeyW'] || gameState.keys['ArrowUp'] || gameState.keys['w'] || gameState.keys['W']) inputZ -= 1;
+        if (gameState.keys['KeyS'] || gameState.keys['ArrowDown'] || gameState.keys['s'] || gameState.keys['S']) inputZ += 1;
+        if (gameState.keys['KeyA'] || gameState.keys['ArrowLeft'] || gameState.keys['a'] || gameState.keys['A']) inputX -= 1;
+        if (gameState.keys['KeyD'] || gameState.keys['ArrowRight'] || gameState.keys['d'] || gameState.keys['D']) inputX += 1;
         
         const moveLength = Math.sqrt(inputX * inputX + inputZ * inputZ);
         
         if (moveLength > 0) {
             // 1. カメラの水平方向の向きを取得
-            // カメラの向きからY成分（上下）を無視した水平ベクトルを作成
             const cameraForward = new THREE.Vector3();
             camera.getWorldDirection(cameraForward);
             cameraForward.y = 0;
             cameraForward.normalize();
+            
+            // normalizeの結果がNaNになるのを防ぐ（念のため）
+            if (cameraForward.lengthSq() < 0.01) {
+                cameraForward.set(0, 0, -1);
+            }
             
             const cameraRight = new THREE.Vector3();
             cameraRight.crossVectors(new THREE.Vector3(0, 1, 0), cameraForward).negate().normalize();
@@ -158,16 +222,15 @@ class Player {
             this.targetDirection = Math.atan2(moveDir.x, moveDir.z);
             
             // Shiftで走り、通常は歩き
-            const holdingShift = gameState.keys['Shift'] || gameState.keyPressDuration['Shift'] > 10;
+            const holdingShift = gameState.keys['Shift'] || gameState.keys['ShiftLeft'] || gameState.keys['ShiftRight'];
             this.targetSpeed = holdingShift ? this.runSpeed : this.walkSpeed;
         } else {
             this.targetSpeed = 0;
         }
         
         // ジャンプ入力
-        const jumpPressed = gameState.keys[' '];
+        const jumpPressed = gameState.keys['Space'] || gameState.keys[' '];
         if (jumpPressed && !this.lastJumpInput) {
-            // 現在の移動方向を渡す
             const jumpMoveDir = moveLength > 0 ? 1 : 0; 
             this.initiateJump(jumpMoveDir);
         }
@@ -175,13 +238,13 @@ class Player {
         
         // ジャンプボタン長押しで高く跳ぶ
         if (jumpPressed && this.jumpButtonHeld && this.velocity.y > 0) {
-            const jumpDuration = gameState.keyPressDuration[' '] || 0;
+            const jumpDuration = (gameState.keyPressDuration['Space'] || gameState.keyPressDuration[' ']) || 0;
             const jumpInfluence = Math.min(jumpDuration / 20, 0.5);
             this.velocity.y += jumpInfluence * 0.03;
         }
         this.jumpButtonHeld = jumpPressed;
         
-        // スムーズに方向を更新（キャラのモデルを進行方向に向ける）
+        // スムーズに方向を更新
         if (moveLength > 0) {
             let angleDiff = this.targetDirection - this.direction;
             if (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
@@ -191,6 +254,11 @@ class Player {
         
         // スムーズに速度を更新
         this.currentSpeed += (this.targetSpeed - this.currentSpeed) * this.speedLerpSpeed;
+        
+        // 微小な速度はカットして完全に停止させる
+        if (this.targetSpeed === 0 && this.currentSpeed < 0.01) {
+            this.currentSpeed = 0;
+        }
     }
     
     initiateJump(moveLength) {
@@ -206,7 +274,6 @@ class Player {
             if (this.consecutiveJumps >= 3) {
                 this.velocity.y = this.maxJumpForce;
                 this.jumpStartVelocity = this.velocity.y;
-                showJumpIndicator();
             }
         } else if (this.jumpsUsed < this.maxJumps) {
             // 空中ジャンプ
@@ -219,13 +286,7 @@ class Player {
                 this.velocity.y = this.maxJumpForce * 0.8;
                 this.jumpStartVelocity = this.velocity.y;
             }
-            
-            if (this.jumpsUsed === 2 || this.jumpsUsed === 3) {
-                showJumpIndicator();
-            }
         }
-        
-        document.getElementById('jumpsLeft').textContent = this.maxJumps - this.jumpsUsed;
     }
     
     updateMovement() {
@@ -464,14 +525,6 @@ function createLevel() {
     createPlatform(0, 30, 100, 40, 1, 40, 0xffd700);
 }
 
-function showJumpIndicator() {
-    const indicator = document.getElementById('jumpIndicator');
-    indicator.classList.remove('show');
-    setTimeout(() => {
-        indicator.classList.add('show');
-    }, 10);
-}
-
 function updateUI() {
     document.getElementById('coinCount').textContent = gameState.coins;
     document.getElementById('starCount').textContent = gameState.stars;
@@ -589,8 +642,12 @@ for (let i = 0; i < 3; i++) {
 
 document.addEventListener('keydown', (e) => {
     gameState.keys[e.key] = true;
+    gameState.keys[e.code] = true;
     
     // キー押下時間の追跡を開始
+    if (!gameState.keyPressDuration[e.code]) {
+        gameState.keyPressDuration[e.code] = 0;
+    }
     if (!gameState.keyPressDuration[e.key]) {
         gameState.keyPressDuration[e.key] = 0;
     }
@@ -638,7 +695,17 @@ renderer.domElement.addEventListener('click', () => {
 
 document.addEventListener('keyup', (e) => {
     gameState.keys[e.key] = false;
+    gameState.keys[e.code] = false;
     gameState.keyPressDuration[e.key] = 0;
+    gameState.keyPressDuration[e.code] = 0;
+});
+
+// ウィンドウがフォーカスを失った時にキー入力をリセット（キーの押しっぱなし防止）
+window.addEventListener('blur', () => {
+    gameState.keys = {};
+    Object.keys(gameState.keyPressDuration).forEach(key => {
+        gameState.keyPressDuration[key] = 0;
+    });
 });
 
 window.addEventListener('resize', () => {
