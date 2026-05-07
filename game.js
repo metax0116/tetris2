@@ -118,6 +118,8 @@ class Player {
     
     update() {
         this.handleInput();
+        // 入力処理の後に一旦接地状態をリセットし、その後の衝突判定で再評価する
+        this.isGrounded = false;
         this.updateMovement();
         this.updateGravity();
         this.updatePosition();
@@ -125,27 +127,35 @@ class Player {
     }
     
     handleInput() {
-        // 入力ベクトル（カメラ基準のTPS操作）
-        let moveInput = new THREE.Vector3(0, 0, 0);
+        // 入力ベクトル（WASD）
+        let inputX = 0;
+        let inputZ = 0;
         
-        if (gameState.keys['w'] || gameState.keys['W'] || gameState.keys['ArrowUp']) {
-            moveInput.z -= 1;
-        }
-        if (gameState.keys['s'] || gameState.keys['S'] || gameState.keys['ArrowDown']) {
-            moveInput.z += 1;
-        }
-        if (gameState.keys['a'] || gameState.keys['A'] || gameState.keys['ArrowLeft']) {
-            moveInput.x -= 1;
-        }
-        if (gameState.keys['d'] || gameState.keys['D'] || gameState.keys['ArrowRight']) {
-            moveInput.x += 1;
-        }
+        if (gameState.keys['w'] || gameState.keys['W'] || gameState.keys['ArrowUp']) inputZ -= 1;
+        if (gameState.keys['s'] || gameState.keys['S'] || gameState.keys['ArrowDown']) inputZ += 1;
+        if (gameState.keys['a'] || gameState.keys['A'] || gameState.keys['ArrowLeft']) inputX -= 1;
+        if (gameState.keys['d'] || gameState.keys['D'] || gameState.keys['ArrowRight']) inputX += 1;
         
-        // ターゲット速度を決定（走り中か歩き中か）
-        const moveLength = Math.sqrt(moveInput.x * moveInput.x + moveInput.z * moveInput.z);
+        const moveLength = Math.sqrt(inputX * inputX + inputZ * inputZ);
+        
         if (moveLength > 0) {
-            moveInput.normalize();
-            this.targetDirection = Math.atan2(moveInput.x, moveInput.z);
+            // 1. カメラの水平方向の向きを取得
+            // カメラの向きからY成分（上下）を無視した水平ベクトルを作成
+            const cameraForward = new THREE.Vector3();
+            camera.getWorldDirection(cameraForward);
+            cameraForward.y = 0;
+            cameraForward.normalize();
+            
+            const cameraRight = new THREE.Vector3();
+            cameraRight.crossVectors(new THREE.Vector3(0, 1, 0), cameraForward).negate().normalize();
+            
+            // 2. 入力ベクトルをカメラの向きに合わせて回転
+            const moveDir = new THREE.Vector3()
+                .addScaledVector(cameraForward, -inputZ) // 前後
+                .addScaledVector(cameraRight, inputX)    // 左右
+                .normalize();
+            
+            this.targetDirection = Math.atan2(moveDir.x, moveDir.z);
             
             // Shiftで走り、通常は歩き
             const holdingShift = gameState.keys['Shift'] || gameState.keyPressDuration['Shift'] > 10;
@@ -157,7 +167,9 @@ class Player {
         // ジャンプ入力
         const jumpPressed = gameState.keys[' '];
         if (jumpPressed && !this.lastJumpInput) {
-            this.initiateJump(moveInput);
+            // 現在の移動方向を渡す
+            const jumpMoveDir = moveLength > 0 ? 1 : 0; 
+            this.initiateJump(jumpMoveDir);
         }
         this.lastJumpInput = jumpPressed;
         
@@ -169,7 +181,7 @@ class Player {
         }
         this.jumpButtonHeld = jumpPressed;
         
-        // スムーズに方向を更新
+        // スムーズに方向を更新（キャラのモデルを進行方向に向ける）
         if (moveLength > 0) {
             let angleDiff = this.targetDirection - this.direction;
             if (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
@@ -181,7 +193,7 @@ class Player {
         this.currentSpeed += (this.targetSpeed - this.currentSpeed) * this.speedLerpSpeed;
     }
     
-    initiateJump(moveInput) {
+    initiateJump(moveLength) {
         if (this.isGrounded) {
             this.velocity.y = this.jumpForce;
             this.jumpsUsed = 1;
@@ -202,14 +214,10 @@ class Player {
             this.jumpsUsed += 1;
             this.jumpStartVelocity = this.velocity.y;
             
-            // 幅跳び：走行中に逆方向でジャンプすると横宙返り
-            if (this.currentSpeed > 0.3 && moveInput.length() > 0) {
-                const jumpDir = Math.atan2(moveInput.x, moveInput.z);
-                const angleDiff = Math.abs(jumpDir - this.direction);
-                if (angleDiff > 2) {
-                    this.velocity.y = this.maxJumpForce * 0.8;
-                    this.jumpStartVelocity = this.velocity.y;
-                }
+            // 幅跳び的な挙動の簡易版（移動中なら少しブースト）
+            if (this.currentSpeed > 0.3 && moveLength > 0) {
+                this.velocity.y = this.maxJumpForce * 0.8;
+                this.jumpStartVelocity = this.velocity.y;
             }
             
             if (this.jumpsUsed === 2 || this.jumpsUsed === 3) {
@@ -221,10 +229,10 @@ class Player {
     }
     
     updateMovement() {
-        // プレイヤーの向きを更新
+        // プレイヤーの向きを更新（モデルの回転）
         this.mesh.rotation.y = this.direction;
         
-        // ワールド座標系での移動を計算
+        // 移動方向（現在のモデルの向き）に基づいて速度ベクトルを生成
         const cos = Math.cos(this.direction);
         const sin = Math.sin(this.direction);
         
@@ -264,16 +272,18 @@ class Player {
     }
     
     updateGroundedState() {
-        this.isGrounded = false;
-        
+        // 床（y=0付近）の判定
         if (this.mesh.position.y < 0.5) {
             this.mesh.position.y = 0.5;
             this.velocity.y = 0;
             this.isGrounded = true;
+        }
+
+        if (this.isGrounded) {
             this.jumpsUsed = 0;
             this.groundedFrames++;
             
-            // 接地フレーム数でジャンプカウントをリセット
+            // 接地フレーム数で三段跳び用のジャンプカウントをリセット
             if (this.groundedFrames > 5) {
                 this.consecutiveJumps = 0;
             }
@@ -507,6 +517,8 @@ function checkCollisionsWithPlatforms(player) {
             if (minOverlap === overlapTop && player.velocity.y <= 0) {
                 player.mesh.position.y = platformTop + playerRadius;
                 player.velocity.y = 0;
+                player.isGrounded = true;
+                player.jumpsUsed = 0;
             } else if (minOverlap === overlapBottom && player.velocity.y > 0) {
                 player.mesh.position.y = platformBottom - playerRadius;
                 player.velocity.y = 0;
@@ -591,15 +603,8 @@ document.addEventListener('keydown', (e) => {
         gameState.cameraAngleX = 0;
         gameState.cameraAngleY = 0.5;
     }
-});
 
-document.addEventListener('keyup', (e) => {
-    gameState.keys[e.key] = false;
-    gameState.keyPressDuration[e.key] = 0;
-});
-
-document.addEventListener('keydown', (e) => {
-    // 矢印キーでカメラ操作
+    // 矢印キーでの操作も維持
     if (e.key === 'ArrowLeft') {
         gameState.cameraAngleY += 0.1;
     }
@@ -612,6 +617,28 @@ document.addEventListener('keydown', (e) => {
     if (e.key === 'ArrowDown') {
         gameState.cameraAngleX = Math.min(Math.PI / 3, gameState.cameraAngleX + 0.1);
     }
+});
+
+// マウス移動によるカメラ操作
+document.addEventListener('mousemove', (e) => {
+    if (document.pointerLockElement === renderer.domElement) {
+        const sensitivity = 0.002;
+        gameState.cameraAngleY -= e.movementX * sensitivity;
+        gameState.cameraAngleX += e.movementY * sensitivity;
+        
+        // 垂直方向の回転制限
+        gameState.cameraAngleX = Math.max(-Math.PI / 3, Math.min(Math.PI / 3, gameState.cameraAngleX));
+    }
+});
+
+// クリックでポインターロック（画面内にマウスを固定）
+renderer.domElement.addEventListener('click', () => {
+    renderer.domElement.requestPointerLock();
+});
+
+document.addEventListener('keyup', (e) => {
+    gameState.keys[e.key] = false;
+    gameState.keyPressDuration[e.key] = 0;
 });
 
 window.addEventListener('resize', () => {
