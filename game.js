@@ -148,9 +148,20 @@ class Player {
         
         // アニメーション用タイマー
         this.animTimer = 0;
+
+        // 攻撃状態
+        this.isAttacking = false;
+        this.attackTimer = 0;
     }
     
     update() {
+        if (this.isAttacking) {
+            this.attackTimer--;
+            if (this.attackTimer <= 0) {
+                this.isAttacking = false;
+            }
+        }
+
         this.handleInput();
         this.isGrounded = false;
         this.updateMovement();
@@ -161,28 +172,99 @@ class Player {
     }
     
     updateAnimation() {
-        if (this.currentSpeed > 0.05 && this.isGrounded) {
+        if (this.isAttacking) {
+            // 攻撃アニメーション
+            const progress = (20 - this.attackTimer) / 20;
+            const actionExt = Math.sin(progress * Math.PI) * 1.5;
+            
+            if (this.isGrounded) {
+                // 地上ならパンチ: 右腕を突き出す
+                this.rightArm.rotation.x = -Math.PI / 2;
+                this.rightArm.position.z = actionExt;
+                this.leftArm.rotation.x = 0;
+                this.leftArm.position.z = 0;
+            } else {
+                // 空中ならキック: 右足を突き出す
+                this.rightLeg.rotation.x = -Math.PI / 1.5;
+                this.rightLeg.position.z = actionExt;
+                this.rightLeg.position.y = 1.0;
+                
+                this.leftArm.rotation.x = -Math.PI / 4;
+                this.rightArm.rotation.x = -Math.PI / 4;
+            }
+        } else if (this.currentSpeed > 0.05 && this.isGrounded) {
             // 走り・歩きアニメーション（手足を振る）
             this.animTimer += this.currentSpeed * 0.5;
             const angle = Math.sin(this.animTimer * 10) * 0.5;
             
             this.leftArm.rotation.x = angle;
             this.rightArm.rotation.x = -angle;
+            this.leftArm.position.z = 0;
+            this.rightArm.position.z = 0;
+            
             this.leftLeg.rotation.x = -angle;
             this.rightLeg.rotation.x = angle;
+            this.leftLeg.position.z = 0;
+            this.rightLeg.position.z = 0;
+            this.leftLeg.position.y = 0.5;
+            this.rightLeg.position.y = 0.5;
         } else if (!this.isGrounded) {
             // ジャンプ中のポーズ
             this.leftArm.rotation.x = -Math.PI / 4;
             this.rightArm.rotation.x = -Math.PI / 4;
+            this.leftArm.position.z = 0;
+            this.rightArm.position.z = 0;
+            
             this.leftLeg.rotation.x = 0.2;
             this.rightLeg.rotation.x = -0.2;
+            this.leftLeg.position.z = 0;
+            this.rightLeg.position.z = 0;
+            this.leftLeg.position.y = 0.5;
+            this.rightLeg.position.y = 0.5;
         } else {
             // 直立不動ポーズ
             this.leftArm.rotation.x = 0;
             this.rightArm.rotation.x = 0;
+            this.leftArm.position.z = 0;
+            this.rightArm.position.z = 0;
+            
             this.leftLeg.rotation.x = 0;
             this.rightLeg.rotation.x = 0;
+            this.leftLeg.position.z = 0;
+            this.rightLeg.position.z = 0;
+            this.leftLeg.position.y = 0.5;
+            this.rightLeg.position.y = 0.5;
         }
+    }
+
+    startAttack() {
+        if (!this.isAttacking) {
+            this.isAttacking = true;
+            this.attackTimer = 20; // 20フレーム継続
+            this.checkAttackCollision();
+        }
+    }
+
+    checkAttackCollision() {
+        const attackRange = 5;
+        const attackAngle = Math.PI / 3; // 前方60度
+        
+        enemies.forEach(enemy => {
+            const toEnemy = enemy.mesh.position.clone().sub(this.mesh.position);
+            const dist = toEnemy.length();
+            
+            if (dist < attackRange) {
+                const angleToEnemy = Math.atan2(toEnemy.x, toEnemy.z);
+                let angleDiff = angleToEnemy - this.direction;
+                
+                while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
+                while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
+                
+                if (Math.abs(angleDiff) < attackAngle) {
+                    enemy.takeDamage();
+                }
+            }
+        });
     }
     
     handleInput() {
@@ -255,6 +337,16 @@ class Player {
         // スムーズに速度を更新
         this.currentSpeed += (this.targetSpeed - this.currentSpeed) * this.speedLerpSpeed;
         
+        // 攻撃入力 (Rキー)
+        if ((gameState.keys['KeyR'] || gameState.keys['r'] || gameState.keys['R']) && !this.isAttacking) {
+            this.startAttack();
+        }
+
+        // 攻撃中は少し前進する
+        if (this.isAttacking && this.attackTimer > 10) {
+            this.targetSpeed = this.runSpeed * 0.8;
+        }
+
         // 微小な速度はカットして完全に停止させる
         if (this.targetSpeed === 0 && this.currentSpeed < 0.01) {
             this.currentSpeed = 0;
@@ -419,9 +511,33 @@ class Enemy {
         this.mesh.position.y = Math.sin(Date.now() * 0.005) * 0.5 + 2;
         
         if (dist < 3) {
-            gameState.health--;
-            this.mesh.position.set(Math.random() * 100 - 50, 5, Math.random() * 100 - 50);
+            // 踏みつけ判定
+            const playerY = player.mesh.position.y;
+            const enemyY = this.mesh.position.y;
+            
+            if (player.velocity.y < 0 && playerY > enemyY + 1.0) {
+                // 踏みつけ成功！
+                this.takeDamage();
+                player.velocity.y = 0.5; // ポーンと跳ねる
+            } else {
+                // プレイヤーがダメージ
+                gameState.health--;
+                // 敵を少し遠くに飛ばして連続ダメージを防ぐ
+                this.mesh.position.set(Math.random() * 100 - 50, 5, Math.random() * 100 - 50);
+            }
         }
+    }
+
+    takeDamage() {
+        this.die();
+    }
+
+    die() {
+        scene.remove(this.mesh);
+        // 敵リストから削除
+        enemies = enemies.filter(e => e !== this);
+        // コインを落とす
+        coins.push(new Coin(this.mesh.position.x, this.mesh.position.y, this.mesh.position.z));
     }
 }
 
@@ -691,6 +807,18 @@ document.addEventListener('mousemove', (e) => {
 // クリックでポインターロック（画面内にマウスを固定）
 renderer.domElement.addEventListener('click', () => {
     renderer.domElement.requestPointerLock();
+});
+
+document.addEventListener('mousedown', (e) => {
+    if (e.button === 0) { // 左クリック
+        gameState.keys['mousedown'] = true;
+    }
+});
+
+document.addEventListener('mouseup', (e) => {
+    if (e.button === 0) {
+        gameState.keys['mousedown'] = false;
+    }
 });
 
 document.addEventListener('keyup', (e) => {
